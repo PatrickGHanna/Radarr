@@ -104,11 +104,13 @@ Task("Compile").Does(() => {
 });
 
 Task("Gulp").Does(() => {
-	Npm
-		.WithLogLevel(NpmLogLevel.Silent)
-		.FromPath(".")
-			.Install()
-			.RunScript("build");
+	NpmInstall(new NpmInstallSettings {
+		LogLevel = NpmLogLevel.Silent,
+		WorkingDirectory = "./",
+		Production = true
+	});
+	
+	NpmRunScript("build");
 });
 
 Task("PackageMono").Does(() => {
@@ -167,7 +169,7 @@ Task("PackageOsx").Does(() => {
 	CopyFiles(sourceFolder + "/Libraries/MediaInfo/*.dylib", outputFolderOsx);
 
 	// Adding Startup script
-	CopyFile("./osx/Sonarr", outputFolderOsx + "/Sonarr");
+	CopyFile("./osx/Radarr", outputFolderOsx + "/Radarr");
 });
 
 Task("PackageOsxApp").Does(() => {

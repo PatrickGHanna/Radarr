@@ -2,6 +2,7 @@ var Marionette = require('marionette');
 var SearchResultView = require('./SearchResultView');
 var FullMovieCollection = require('../Movies/FullMovieCollection');
 var vent = require('vent');
+var $ = require("jquery");
 
 module.exports = Marionette.CollectionView.extend({
 		itemView : SearchResultView,
@@ -9,7 +10,7 @@ module.exports = Marionette.CollectionView.extend({
 		initialize : function(options) {
 				this.showExisting = true;
 				this.isExisting = options.isExisting;
-				this.showing = 5;
+				this.showing = 10;
 				if (this.isExisting) {
 					this.showing = 1;
 				}
@@ -28,9 +29,10 @@ module.exports = Marionette.CollectionView.extend({
 		},
 
 		showMore : function() {
-				this.showing += 5;
+				var pos = $(window).scrollTop();
+				this.showing += 10;
 				this.render();
-
+				$(window).scrollTop(pos);
 				return this.showing >= this.collection.length;
 		},
 

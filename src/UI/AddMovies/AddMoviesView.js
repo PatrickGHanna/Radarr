@@ -1,12 +1,15 @@
 var _ = require('underscore');
+var $ = require('jquery');
 var vent = require('vent');
 var Marionette = require('marionette');
 var AddMoviesCollection = require('./AddMoviesCollection');
 var SearchResultCollectionView = require('./SearchResultCollectionView');
 var EmptyView = require('./EmptyView');
 var NotFoundView = require('./NotFoundView');
+var DiscoverEmptyView = require('./DiscoverEmptyView');
 var ErrorView = require('./ErrorView');
 var LoadingView = require('../Shared/LoadingView');
+var FullMovieCollection = require("../Movies/FullMovieCollection");
 
 module.exports = Marionette.Layout.extend({
 		template : 'AddMovies/AddMoviesViewTemplate',
@@ -18,16 +21,24 @@ module.exports = Marionette.Layout.extend({
 		ui : {
 				moviesSearch : '.x-movies-search',
 				searchBar    : '.x-search-bar',
-				loadMore     : '.x-load-more'
+				loadMore     : '.x-load-more',
+				discoverHeader : ".x-discover-header",
+				discoverBefore : ".x-discover-before",
+				discoverRecos : ".x-recommendations-tab",
+				discoverPopular : ".x-popular-tab" ,
+				discoverUpcoming : ".x-upcoming-tab"
 		},
 
 		events : {
-				'click .x-load-more' : '_onLoadMore'
+				'click .x-load-more' : '_onLoadMore',
+				"click .x-recommendations-tab" : "_discoverRecos",
+				"click .x-popular-tab" : "_discoverPopular",
+				"click .x-upcoming-tab" : "_discoverUpcoming"
 		},
 
 		initialize : function(options) {
 				this.isExisting = options.isExisting;
-				this.collection = new AddMoviesCollection();
+				this.collection = options.collection || new AddMoviesCollection();
 
 				if (this.isExisting) {
 						this.collection.unmappedFolderModel = this.model;
@@ -51,12 +62,16 @@ module.exports = Marionette.Layout.extend({
 
 				if (options.action === "search") {
 					this.search({term: options.query});
+				} else if (options.action == "discover") {
+					this.isDiscover = true;
 				}
 
 		},
 
 		onRender : function() {
 				var self = this;
+
+
 
 				this.$el.addClass(this.className);
 
@@ -95,10 +110,24 @@ module.exports = Marionette.Layout.extend({
 				if (this.isExisting) {
 						this.ui.searchBar.hide();
 				}
+
+				if (this.isDiscover) {
+						this.ui.searchBar.hide();
+						this._discoverRecos();
+						/*if (this.collection.length == 0) {
+							this.searchResult.show(new LoadingView());
+						}*/
+				}
 		},
 
 		onShow : function() {
+				this.ui.discoverBefore.hide();
 				this.ui.moviesSearch.focus();
+				this.ui.loadMore.hide();
+
+				if (this.isDiscover) {
+						this.ui.discoverBefore.show();
+				}
 		},
 
 		search : function(options) {
@@ -140,7 +169,10 @@ module.exports = Marionette.Layout.extend({
 
 		_onLoadMore : function() {
 				var showingAll = this.resultCollectionView.showMore();
-				this.ui.searchBar.show();
+				if (!this.isDiscover) {
+					this.ui.searchBar.show();
+				}
+
 
 				if (showingAll) {
 						this.ui.loadMore.hide();
@@ -159,8 +191,14 @@ module.exports = Marionette.Layout.extend({
 		_showResults : function() {
 				if (!this.isClosed) {
 						if (this.collection.length === 0) {
-								this.ui.searchBar.show();
-								this.searchResult.show(new NotFoundView({ term : this.collection.term }));
+								this.ui.loadMore.hide();
+								if (this.isDiscover) {
+									this.searchResult.show(new DiscoverEmptyView());
+								} else {
+									this.ui.searchBar.show();
+									this.searchResult.show(new NotFoundView({ term : this.collection.term }));
+								}
+
 						} else {
 								this.searchResult.show(this.resultCollectionView);
 								if (!this.showingAll) {
@@ -185,5 +223,35 @@ module.exports = Marionette.Layout.extend({
 						this.searchResult.show(new ErrorView({ term : this.collection.term }));
 						this.collection.term = '';
 				}
-		}
+		},
+
+		_discover : function(action) {
+			if (this.collection.action === action) {
+				return
+			}
+			this.collection.reset();
+			this.searchResult.show(new LoadingView());
+			this.collection.action = action;
+			this.currentSearchPromise = this.collection.fetch();
+		},
+
+		_discoverRecos : function() {
+			this.ui.discoverRecos.tab("show");
+			this.ui.discoverHeader.html("Recommendations by The Movie Database for you");
+			this._discover("recommendations");
+		},
+
+		_discoverPopular : function() {
+			this.ui.discoverPopular.tab("show");
+			this.ui.discoverHeader.html("Currently Popular Movies");
+			this._discover("popular");
+		},
+
+		_discoverUpcoming : function() {
+			this.ui.discoverUpcoming.tab("show");
+			this.ui.discoverHeader.html("Movies coming to Blu-Ray in the next weeks");
+			this._discover("upcoming");
+		},
+
+
 });

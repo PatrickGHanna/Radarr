@@ -15,10 +15,12 @@ using NzbDrone.Core.Tv;
 using System.Threading;
 using NzbDrone.Core.Parser;
 using NzbDrone.Core.Profiles;
+using NzbDrone.Common.Serializer;
+using NzbDrone.Core.NetImport.ImportExclusions;
 
 namespace NzbDrone.Core.MetadataSource.SkyHook
 {
-    public class SkyHookProxy : IProvideSeriesInfo, ISearchForNewSeries, IProvideMovieInfo, ISearchForNewMovie
+    public class SkyHookProxy : IProvideSeriesInfo, ISearchForNewSeries, IProvideMovieInfo, ISearchForNewMovie, IDiscoverNewMovies
     {
         private readonly IHttpClient _httpClient;
         private readonly Logger _logger;
@@ -28,8 +30,10 @@ namespace NzbDrone.Core.MetadataSource.SkyHook
         private readonly ITmdbConfigService _configService;
         private readonly IMovieService _movieService;
         private readonly IPreDBService _predbService;
+        private readonly IImportExclusionsService _exclusionService;
 
-        public SkyHookProxy(IHttpClient httpClient, ISonarrCloudRequestBuilder requestBuilder, ITmdbConfigService configService, IMovieService movieService, IPreDBService predbService, Logger logger)
+        public SkyHookProxy(IHttpClient httpClient, ISonarrCloudRequestBuilder requestBuilder, ITmdbConfigService configService, IMovieService movieService,
+                            IPreDBService predbService, IImportExclusionsService exclusionService, Logger logger)
         {
             _httpClient = httpClient;
              _requestBuilder = requestBuilder.SkyHookTvdb;
@@ -37,6 +41,7 @@ namespace NzbDrone.Core.MetadataSource.SkyHook
             _configService = configService;
             _movieService = movieService;
             _predbService = predbService;
+            _exclusionService = exclusionService;
             _logger = logger;
         }
 
@@ -348,6 +353,64 @@ namespace NzbDrone.Core.MetadataSource.SkyHook
             return resources.movie_results.SelectList(MapMovie).FirstOrDefault();
         }
 
+        public List<Movie> DiscoverNewMovies(string action)
+        {
+            var allMovies = _movieService.GetAllMovies();
+            var allExclusions = _exclusionService.GetAllExclusions();
+            string allIds = string.Join(",", allMovies.Select(m => m.TmdbId));
+            string ignoredIds = string.Join(",", allExclusions.Select(ex => ex.TmdbId));
+
+            HttpRequest request;
+            List<MovieResult> results;
+
+            if (action == "upcoming")
+            {
+                var lastWeek = DateTime.Now.AddDays(-7);
+                var threeWeeks = DateTime.Now.AddDays(7 * 3);
+
+                request = _movieBuilder.Create().SetSegment("route", "discover")
+                                         .SetSegment("id", "movie")
+                                         .SetSegment("secondaryRoute", "")
+                                         .AddQueryParam("region", "us")
+                                         .AddQueryParam("with_release_type", "5|4|6")
+                                         .AddQueryParam("release_date.gte", lastWeek.ToString("yyyy-MM-dd"))
+                                         .AddQueryParam("sort_by", "popularity.desc")
+                                         .AddQueryParam("release_date.lte", threeWeeks.ToString("yyyy-MM-dd")).Build();
+
+
+                var response = _httpClient.Get<MovieSearchRoot>(request);
+
+                if (response.StatusCode != HttpStatusCode.OK)
+                {
+                    throw new HttpException(request, response);
+                }
+
+                results = response.Resource.results.ToList();
+            }
+            else
+            {
+                request = new HttpRequestBuilder("https://radarr.video/api/{action}/").SetSegment("action", action).Build();
+
+                request.AllowAutoRedirect = true;
+                request.Method = HttpMethod.POST;
+                request.Headers.ContentType = "application/x-www-form-urlencoded";
+                request.SetContent($"tmdbids={allIds}&ignoredIds={ignoredIds}");
+
+                var response = _httpClient.Post<List<MovieResult>>(request);
+
+                if (response.StatusCode != HttpStatusCode.OK)
+                {
+                    throw new HttpException(request, response);
+                }
+
+                results = response.Resource;
+            }
+
+            results = results.Where(m => allMovies.None(mo => mo.TmdbId == m.id) && allExclusions.None(ex => ex.TmdbId == m.id)).ToList();
+
+            return results.SelectList(MapMovie);
+        }
+
         private string StripTrailingTheFromTitle(string title)
         {
             if(title.EndsWith(",the"))
@@ -551,6 +614,8 @@ namespace NzbDrone.Core.MetadataSource.SkyHook
 
                 imdbMovie.Images = new List<MediaCover.MediaCover>();
                 imdbMovie.Overview = result.overview;
+                imdbMovie.Ratings = new Ratings { Value = (decimal)result.vote_average, Votes = result.vote_count};
+
                 try
                 {
                     var imdbPoster = _configService.GetCoverForURL(result.poster_path, MediaCoverTypes.Poster);
@@ -559,6 +624,15 @@ namespace NzbDrone.Core.MetadataSource.SkyHook
                 catch (Exception e)
                 {
                     _logger.Debug(result);
+                }
+
+                if (result.trailer_key.IsNotNullOrWhiteSpace() && result.trailer_site.IsNotNullOrWhiteSpace())
+                {
+                    if (result.trailer_site == "youtube")
+                    {
+                        imdbMovie.YouTubeTrailerId = result.trailer_key;
+                    }
+
                 }
 
                 return imdbMovie;
